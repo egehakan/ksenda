@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security disclosure
+    url: https://github.com/egehakan/ksenda/security/policy
+    about: Report a security vulnerability privately (do not open a public issue).
+  - name: Commercial / licensing questions
+    url: mailto:hakan@ksenda.com
+    about: Email Hakan to discuss commercial use beyond the PolyForm Noncommercial license.

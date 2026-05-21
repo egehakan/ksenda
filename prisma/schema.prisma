@@ -1,0 +1,501 @@
+// Prisma schema for Ksenda — multi-tenant SaaS
+// Each registered User is a tenant: brings their own Apollo + Gemini API keys,
+// configures their own SMTP (Gmail / Outlook / custom) for sending,
+// and owns their own Companies, Emails, Prompts, TargetTitles, etc.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Application user (tenant)
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?  // Display name for the human
+
+  // Role gates access to the /admin dashboard. "USER" is the default tenant
+  // role; "ADMIN" is reserved for the single operator account
+  // (admin@ksenda.com) provisioned by scripts/seed-admin.ts.
+  role         String   @default("USER")
+
+  // Their company (used in emails as the SENDER company context)
+  companyName    String?
+  companyWebsite String?
+
+  // Per-user API keys for the integrations they bring
+  apolloApiKey String?
+  geminiApiKey String?
+
+  // SMTP configuration for outbound email
+  // smtpProvider: "gmail" | "outlook" | "custom" | null
+  smtpProvider String?
+  smtpHost     String?  // Only used when smtpProvider == "custom"
+  smtpPort     Int?     // Only used when smtpProvider == "custom"
+  smtpSecure   Boolean? // TLS (true = port 465 implicit; false = STARTTLS on 587)
+  smtpUser     String?  // SMTP login (usually the email address)
+  smtpPassword String?  // App password / SMTP password
+
+  // Sending identity
+  senderEmail String? // FROM address (defaults to smtpUser if blank)
+  senderName  String? // Display name for the FROM header
+  signature   String? // HTML signature appended to outbound mail
+
+  // Email verification (platform-level transactional via SES)
+  emailVerifiedAt      DateTime?
+  verifyToken          String?
+  verifyTokenExpiresAt DateTime?
+
+  // Automation toggles — all default OFF. Each independently opts a stage
+  // of the pipeline out of the human review gate. Combined, they enable
+  // fully hands-off operation; in isolation, they collapse single steps.
+  autoImportEnabled         Boolean @default(false) // search + import on a schedule
+  autoApproveInitialDrafts  Boolean @default(false) // generated → approved_to_send
+  autoSendApprovedEmails    Boolean @default(false) // approved_to_send → sent
+  autoGenerateFollowUps     Boolean @default(false) // run follow-up engine automatically
+  autoApproveFollowUps      Boolean @default(false) // generated follow-up → auto-send
+
+  // Safety rails for auto-send.
+  dailyImportCap            Int     @default(25)
+  dailySendCap              Int     @default(25)
+  automationWindowStartHour Int     @default(9)
+  automationWindowEndHour   Int     @default(17)
+  automationTimezone        String? @default("Europe/Istanbul")
+
+  // Saved search recipe the auto-importer runs.
+  //   savedSearchKind = "companies" | "people"
+  //   savedSearchFiltersJson = filters object the search routes accept
+  savedSearchKind        String?
+  savedSearchFiltersJson String?
+
+  // Last-run telemetry for the Settings UI.
+  automationLastRunAt      DateTime?
+  automationLastRunSummary String?
+
+  // Onboarding state. New tenants step through Profile → API Keys → Email
+  // Provider → Sender → Signature → Target Titles before reaching the
+  // dashboard. `onboardingStep` is the LAST completed step ("" or null = not
+  // started; "done" = finished). The dashboard redirects to /onboarding
+  // whenever `onboardingCompletedAt` is null. Existing pre-launch users are
+  // backfilled with `onboardingCompletedAt = createdAt` so they skip the flow.
+  onboardingStep        String?
+  onboardingCompletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies            Company[]
+  prompts              Prompt[]
+  followUpPrompts      FollowUpPrompt[]
+  targetTitles         TargetTitle[]
+  fetchedOrganizations FetchedOrganization[]
+  auditLogs            AuditLog[]
+  savedSearches        SavedSearch[]
+  campaignDays         CampaignDay[]
+  generationJobs       GenerationJob[]
+  aiDetectionCache     AiDetectionCache[]
+
+  @@index([role])
+}
+
+// Per-(userId, domain) cache for the AI-presence detector. Search-page
+// detection populates this; subsequent calls for the same domain are
+// served from cache. Company import copies cached results onto the
+// Company row at import time.
+model AiDetectionCache {
+  id         String   @id @default(cuid())
+  userId     String
+  domain     String
+  hasAi      Boolean
+  confidence String   // confirmed_has_ai | probably_no_ai | definitely_no_ai | unknown
+  resultJson String   // full AiDetectionResult JSON for inspection
+  checkedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, domain])
+  @@index([userId])
+  @@index([userId, checkedAt])
+}
+
+// Company record from Apollo (scoped to a User)
+model Company {
+  id            String  @id @default(cuid())
+  userId        String
+  apolloId      String?
+  name          String
+  domain        String
+  website       String?
+  industry      String?
+  location      String?
+  employeeCount Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Target contact - found when preparing to send
+  targetContactFirstName   String?
+  targetContactLastName    String?
+  targetContactEmail       String?
+  targetContactTitle       String?
+  targetContactLinkedinUrl String?
+  contactFoundAt           DateTime?
+
+  // Pipeline state - deterministic tracking
+  // pending_generation | email_not_generated | pending_review | approved_to_send | sent
+  pipelineState String @default("pending_generation")
+
+  // Reason if email not generated
+  notGeneratedReason Json?
+
+  // Client lifecycle, separate axis from pipelineState. Set when the
+  // initial Email is sent; null while still in the pre-send pipeline.
+  //   null | contacted | replied | in_progress | won | lost | no_reply | snoozed
+  clientStatus          String?
+  clientStatusUpdatedAt DateTime?
+  clientNote            String?
+  // When the next follow-up should be generated. NULL while the company has
+  // no Email yet, or after the sequence has been stopped.
+  nextFollowUpAt        DateTime?
+  // 0 = no follow-up sent yet (only initial), 1/2/3 = nth follow-up sent.
+  followUpStep          Int       @default(0)
+  // True when the company was added by the user via the Clients page,
+  // bypassing the Apollo search flow entirely.
+  isManual              Boolean   @default(false)
+
+  // AI-presence detection (Gemini urlContext + googleSearch). Populated on
+  // demand from the search pages, the Companies tab, or Automation. The bool
+  // is denormalized from the JSON for cheap filtering; the JSON has the full
+  // evidence trail (URLs visited, search queries, operational pain signals).
+  aiHasAi       Boolean?
+  aiStatusJson  String?
+  aiCheckedAt   DateTime?
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email          Email?
+  followUpEmails FollowUpEmail[]
+
+  @@unique([userId, apolloId])
+  @@index([userId])
+  @@index([userId, pipelineState])
+  @@index([userId, clientStatus])
+  @@index([userId, nextFollowUpAt])
+}
+
+// Generated email for a company
+model Email {
+  id        String  @id @default(cuid())
+  companyId String  @unique
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // "email" | "linkedin" — LinkedIn rows have no subject and are sent manually
+  // by the user from their own LinkedIn account via the LinkedInSendModal.
+  channel String @default("email")
+
+  promptUsed String
+
+  subject         String?
+  body            String
+  generatedAt     DateTime @default(now())
+  geminiModelUsed String?
+
+  // Human review edits
+  editedSubject String?
+  editedBody    String?
+  reviewedAt    DateTime?
+  reviewedBy    String?
+
+  // Final content (after review edits)
+  finalSubject String?
+  finalBody    String?
+
+  // Approval tracking
+  approvedAt DateTime?
+  approvedBy String?
+
+  // Sending tracking
+  sentAt       DateTime?
+  sentTo       String?
+  sendError    String?
+  sendAttempts Int       @default(0)
+
+  // RFC 822 Message-Id returned by nodemailer on send. Used as the
+  // In-Reply-To header on follow-ups so Gmail threads them.
+  messageId    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Follow-up emails for a company. The initial cold email lives on `Email`;
+// follow-ups 1/2/3 live here. Same review/approve/send lifecycle.
+model FollowUpEmail {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // 1 = day 3 quick follow-up, 2 = day 7 value-add, 3 = day 14 break-up.
+  step Int
+
+  // Inherits from the parent Company's Email.channel at generation time.
+  channel String @default("email")
+
+  promptUsed      String
+  subject         String?
+  body            String
+  generatedAt     DateTime @default(now())
+  geminiModelUsed String?
+
+  editedSubject String?
+  editedBody    String?
+  reviewedAt    DateTime?
+  reviewedBy    String?
+
+  finalSubject String?
+  finalBody    String?
+
+  approvedAt DateTime?
+  approvedBy String?
+
+  sentAt       DateTime?
+  sentTo       String?
+  sendError    String?
+  sendAttempts Int       @default(0)
+
+  // The Message-Id of the original initial email — sent as `In-Reply-To`
+  // and `References` so Gmail keeps the conversation threaded.
+  threadMessageId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, step])
+}
+
+// Follow-up prompt templates (one per step, scoped to User). The user can
+// edit the content/dayOffset; the engine reads these when generating each
+// follow-up.
+model FollowUpPrompt {
+  id        String  @id @default(cuid())
+  userId    String
+  step      Int     // 1 = day 3, 2 = day 7, 3 = day 14
+  dayOffset Int     // configurable; default 3 / 7 / 14
+  name      String
+  content   String
+  isActive  Boolean @default(true)
+  // "email" | "linkedin"
+  platform  String  @default("email")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, step, platform])
+  @@index([userId])
+}
+
+// Prompt for AI email generation (scoped to User)
+model Prompt {
+  id          String  @id @default(cuid())
+  userId      String
+  name        String
+  content     String
+  description String?
+  isSystem    Boolean @default(false)
+  isActive    Boolean @default(true)
+  // "email" | "linkedin" — the active_prompt has one row per platform.
+  platform    String  @default("email")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name, platform])
+  @@index([userId])
+}
+
+// Target job titles for outreach (scoped to User)
+model TargetTitle {
+  id       String  @id @default(cuid())
+  userId   String
+  title    String
+  priority Int     @default(100) // Lower = higher priority
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, title])
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([userId, priority])
+}
+
+// Audit log (scoped to User)
+model AuditLog {
+  id         String  @id @default(cuid())
+  userId     String
+  entityType String  // company, email
+  entityId   String
+  action     String  // state_change, email_generated, email_sent, etc.
+  fromState  String?
+  toState    String?
+  metadata   Json?
+
+  performedBy String?
+  performedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, entityType, entityId])
+  @@index([userId, performedAt])
+}
+
+// Reusable named search recipe (the user's "library"). Built-ins (A1..B5)
+// are seeded for every user; users can also add custom recipes.
+model SavedSearch {
+  id              String   @id @default(cuid())
+  userId          String
+  code            String   // "A1", "A2", "custom-foo", etc.
+  name            String
+  description     String?
+  kind            String   // "companies" | "people"
+  filtersJson     String   // JSON-serialized filter object
+  defaultDailyCap Int      @default(25)
+  isBuiltIn       Boolean  @default(false)
+
+  // AI-presence gate for the import loop.
+  //   any     — import all matches (no detection)
+  //   no_ai   — page-walk Apollo, AI-detect each page, only import companies
+  //             where confidence is definitely_no_ai or probably_no_ai
+  //   has_ai  — symmetric: import only confirmed_has_ai
+  aiFilter        String   @default("any")
+
+  // Outreach channel this recipe drives. "email" | "linkedin". Determines
+  // which prompts the generator uses and which auto-send paths apply.
+  // LinkedIn recipes default to defaultDailyCap=15 (manual paste bottleneck).
+  channel         String   @default("email")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaignDays CampaignDay[]
+
+  @@unique([userId, code])
+  @@index([userId])
+}
+
+// One row per scheduled outbound day. The orchestrator reads today's row
+// and runs the recipe + caps on it. Generated 30 at a time from the PDF
+// pattern; user can override any individual day.
+model CampaignDay {
+  id              String    @id @default(cuid())
+  userId          String
+  scheduledDate   String    // YYYY-MM-DD (date-only, no time component)
+  savedSearchId   String?   // nullable for skip days
+  dailyImportCap  Int       @default(25)
+  dailySendCap    Int       @default(25)
+  focusNote       String?
+  // scheduled | skipped | completed
+  status          String    @default("scheduled")
+  // Outreach channel the recipe runs as. Denormalized from `savedSearch.channel`
+  // so the compound unique key below can disambiguate two campaign rows on
+  // the same date — one email, one LinkedIn (when the user picked "both" in
+  // smart setup).
+  channel         String    @default("email")
+  ranAt           DateTime?
+  outcomeSummary  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  savedSearch SavedSearch? @relation(fields: [savedSearchId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, scheduledDate, channel])
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, scheduledDate])
+}
+
+// Per-item progress event attached to a GenerationJob. Each entry is one
+// thing the user can see in the expanded widget card: "checking acme.com",
+// "verdict: no_ai", "generating email for Acme Inc", "failed: no contact".
+// Concurrent-safe (no JSON merge race) and orders naturally by createdAt.
+model GenerationJobDetail {
+  id        String   @id @default(cuid())
+  jobId     String
+  // Short label for this row in the UI — e.g. company name or domain.
+  name      String
+  // The lifecycle status of this entry.
+  //   checking | no_ai | has_ai | unknown_ai
+  //   finding_contact | generating | pending_review | sent | failed
+  status    String
+  // Optional extra text (e.g. summary, error message).
+  detail    String?
+  createdAt DateTime @default(now())
+
+  job GenerationJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+// Progress tracking for long-running operations. One row per import /
+// follow-up batch / automation run. Frontend polls /api/jobs/active to
+// surface in-flight work to the user.
+model GenerationJob {
+  id              String    @id @default(cuid())
+  userId          String
+  // company_import | people_import | followup_process | automation_run | single_generation
+  kind            String
+  // running | completed | failed
+  status          String    @default("running")
+  totalItems      Int       @default(0)
+  processedItems  Int       @default(0)
+  // What's happening right now, e.g. "Generating email for Acme Inc"
+  currentLabel    String?
+  startedAt       DateTime  @default(now())
+  // Bumped by updateJob/completeJob/failJob. The reaper kills jobs whose
+  // heartbeat is older than ~5 min — a crashed server stops heartbeating
+  // immediately, so abandoned rows clear from the widget quickly. Genuinely
+  // long jobs that keep beating live forever.
+  lastHeartbeatAt DateTime?
+  completedAt     DateTime?
+  error           String?
+  metadataJson    String?
+
+  user    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  details GenerationJobDetail[]
+
+  @@index([userId, status])
+  @@index([userId, startedAt])
+  @@index([userId, lastHeartbeatAt])
+}
+
+// Track Apollo organizations a User has imported (for exclusion from future searches)
+model FetchedOrganization {
+  id        String   @id @default(cuid())
+  userId    String
+  apolloId  String
+  domain    String?
+  name      String?
+  fetchedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, apolloId])
+  @@index([userId])
+  @@index([userId, domain])
+}

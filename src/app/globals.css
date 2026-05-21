@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens — friendlier dark-mode rebuild.
+ *
+ * Dark surfaces lifted toward a calm warm-violet base. Borders softer
+ * (less hard contrast). Modest rounded corners (~6-10px) instead of the
+ * brutalist sharp 2px. Accent is a friendly amber-violet that reads as
+ * a CTA without screaming. Tokens still expose shadcn-compat aliases.
+ */
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+
+  /* Surfaces — slightly lifted from before, calmer contrast steps. */
+  --color-canvas: oklch(0.18 0.010 285);
+  --color-panel: oklch(0.22 0.012 285);
+  --color-raised: oklch(0.26 0.014 285);
+
+  /* Sidebar dedicated surface — sits at a different elevation from canvas. */
+  --color-sidebar: oklch(0.20 0.011 285);
+  --color-sidebar-fg: var(--color-fg);
+  --color-sidebar-hover: oklch(0.26 0.014 285);
+  --color-sidebar-active: oklch(0.30 0.018 305 / 0.22);
+
+  /* Borders — softer than before. */
+  --color-line: oklch(0.32 0.012 285);
+  --color-line-strong: oklch(0.42 0.014 285);
+  --color-line-soft: oklch(0.28 0.010 285);
+
+  /* Foreground */
+  --color-fg: oklch(0.97 0.005 285);
+  --color-fg-muted: oklch(0.72 0.010 285);
+  --color-fg-subtle: oklch(0.56 0.010 285);
+
+  /* Accent — friendlier violet-amber. Reads as a CTA without shouting. */
+  --color-accent: oklch(0.66 0.18 305);
+  --color-accent-fg: oklch(0.10 0.012 285);
+  --color-accent-soft: oklch(0.45 0.14 305 / 0.24);
+  --color-accent-hover: oklch(0.72 0.18 305);
+
+  /* Status — derived from foreground for restraint, except error. */
+  --color-status-pending: oklch(0.72 0.010 285);
+  --color-status-error: oklch(0.68 0.18 25);
+  --color-status-approved: var(--color-accent);
+  --color-status-sent: oklch(0.72 0.010 285);
+  --color-status-success: oklch(0.72 0.14 155);
+
+  /* shadcn-compat aliases */
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-fg);
+  --color-card: var(--color-panel);
+  --color-card-foreground: var(--color-fg);
+  --color-popover: var(--color-raised);
+  --color-popover-foreground: var(--color-fg);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: var(--color-accent-fg);
+  --color-secondary: var(--color-panel);
+  --color-secondary-foreground: var(--color-fg);
+  --color-muted: var(--color-panel);
+  --color-muted-foreground: var(--color-fg-muted);
+  --color-destructive: var(--color-status-error);
+  --color-destructive-foreground: var(--color-fg);
+  --color-border: var(--color-line);
+  --color-input: var(--color-line);
+  --color-ring: var(--color-accent);
+
+  /* Friendlier rounding — shadcn-conventional scale. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "ss03", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Numerals: tabular figures everywhere by default. Counts, timestamps, IDs
+ * all need to align. Override with `font-prop-nums` only for prose.
+ */
+body {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-fg);
+}
+
+/* Focus ring — 2px accent, no offset, no shadow blur. */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Scrollbars: thin, restrained, never the focal point. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 999px;
+  border: 2px solid var(--color-canvas);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-line-strong);
+}
+
+/*
+ * Motion: 150ms ease-out-quart on opacity, color, transform.
+ * Layout properties are never animated. Reduced motion disables everything
+ * except focus rings.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Utilities */
+.hairline {
+  border-color: var(--color-line);
+}
+
+.hairline-strong {
+  border-color: var(--color-line-strong);
+}
+
+.hairline-soft {
+  border-color: var(--color-line-soft);
+}
+
+.font-mono-tight {
+  font-family: var(--font-mono);
+  font-feature-settings: "ss01", "ss02", "zero", "tnum";
+  letter-spacing: -0.005em;
+}
+
+/* Mono small-caps treatment used for nav, state strip labels, section eyebrows. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+  font-feature-settings: "ss01", "tnum";
+}
+
+/* Card with subtle elevation — friendlier than the brutalist outline-only style. */
+.surface-card {
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 1px 0 oklch(0 0 0 / 0.10),
+    0 8px 24px -16px oklch(0 0 0 / 0.40);
+}
+
+.surface-card-hover {
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.surface-card-hover:hover {
+  border-color: var(--color-line);
+  background-color: var(--color-raised);
+}
