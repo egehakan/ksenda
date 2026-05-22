@@ -132,7 +132,7 @@ export async function generateEmail(opts: GenerateEmailOptions): Promise<EmailGe
       // Grounding: urlContext lets the model fetch URLs we hand it,
       // googleSearch lets it find fresh signals (recent funding, hiring,
       // product launches). Both are wired so Series-A startups the model
-      // has never seen still get real-world context — not hallucination.
+      // has never seen still get real-world context, not hallucination.
       tools: getGroundingTools(),
     });
 
@@ -169,21 +169,33 @@ ${contactInfo}${senderBlock}
 
 TOOLS AVAILABLE
 You have two live tools: url-context (fetch the URLs above) and google-search
-(query the web). You MUST use them before writing — do not rely on training
+(query the web). You MUST use them before writing. Do not rely on training
 data alone, especially for Series-A and growth-stage companies the training
 data does not cover.
 
-REQUIRED RESEARCH STEPS — do these in order before producing the email
-1. Fetch COMPANY_WEBSITE_URL with url-context. Read the homepage, the
-   product / features page, and any "About" or "Customers" page if linked.
-   Capture: what they actually build, who their users are, their core
-   technical surface, and any specific feature names you can reference.
+REQUIRED RESEARCH BEFORE WRITING, use the tools generously and with NO artificial cap
+You may call url-context and google-search as many times as the research needs.
+More grounding beats less. Do NOT stop after a single search.
+1. Fetch COMPANY_WEBSITE_URL with url-context, and follow through to the pages
+   that matter: homepage, product / features / services page, "About",
+   "Customers" or case studies, and the careers page if linked. Fetch as many
+   of their pages as you need (url-context allows up to 20 URLs per run).
+   Capture what they build, who their users are, named features, and any
+   observable signal (repetitive hiring, expansion, a process bottleneck).
 2. Fetch SENDER_COMPANY_WEBSITE with url-context so you accurately
-   represent the sender — pull one real case study or proof point.
-3. Run ONE google-search for "${companyName}" plus "funding" or "hiring"
-   or "AI" depending on what looks most relevant. Note recent news,
-   funding rounds, or hiring posts you can reference.
-4. Only after these three steps, write the email per the structure above.
+   represent the sender, pull one real case study or proof point.
+3. Run MULTIPLE google-search queries, not just one:
+   (a) "${companyName}" recent news, press, funding, or launches (2025..2026);
+   (b) "${companyName}" hiring or open roles;
+   (c) one or more searches for the competitor or same-industry AI numbers your
+       prompt asks you to cite, e.g. "[their industry] firms AI results 2025 2026"
+       or "[a named competitor] AI [workflow]". Keep searching until you have a
+       real, citable figure or have confirmed none exists.
+4. Fetch any promising URL a search surfaces (a vendor case study, an analyst
+   page, a competitor announcement) with url-context to confirm a number before
+   you cite it.
+5. Only after the research actually returns something you can cite, write the
+   email per the structure above.
 
 HONESTY RULE
 Do not invent product names, features, customer logos, or metrics. If a
@@ -327,12 +339,14 @@ COMPANY_NAME: ${companyName}
 ${contactInfo}${senderBlock}
 
 CHANNEL REMINDER
-You are writing a LinkedIn DM, not an email. Output JSON must contain ONLY a "message" field — no subject, no greeting block, no sign-off, no links in the first message.
+You are writing a LinkedIn DM, not an email. The output JSON must contain ONLY a "message" field; there is no separate subject field, so format the message exactly as your prompt specifies (including any subject line, greeting, and sign-off it asks for). Do not include any links in the first message.
 
-REQUIRED RESEARCH STEPS — do these in order before producing the message
-1. Fetch COMPANY_WEBSITE_URL with url-context. Capture one named feature or workflow.
+REQUIRED RESEARCH BEFORE WRITING, use the tools generously and with NO artificial cap
+You may call url-context and google-search as many times as the research needs. Do NOT stop after a single search.
+1. Fetch COMPANY_WEBSITE_URL with url-context, plus their product / services and careers pages if linked. Capture named features and one observable signal. Fetch as many of their pages as you need (up to 20 URLs per run).
 2. Fetch SENDER_COMPANY_WEBSITE with url-context so you represent the sender accurately.
-3. Run ONE google-search for "${companyName}" plus the strongest live signal you can find (funding, hiring, recent post). Note one specific thing worth referencing.
+3. Run MULTIPLE google-search queries, not just one: (a) "${companyName}" recent news, press, funding, or launches (2025..2026); (b) "${companyName}" hiring; (c) one or more searches for the competitor or same-industry AI numbers your prompt asks you to cite. Keep searching until you have a real, citable figure or have confirmed none exists.
+4. Fetch any promising URL a search surfaces with url-context to confirm a number before citing it.
 
 HONESTY RULE
 Do not invent product names, features, customer logos, or metrics. If a fact would embarrass the sender if wrong, leave it out unless the tool confirmed it.

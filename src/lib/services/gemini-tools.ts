@@ -7,7 +7,7 @@
  * - googleSearch: lets the model search the public web for fresh context
  *   (recent funding, hiring posts, product launches, news).
  *
- * The Gemini API accepts both together on `gemini-3-pro-preview`; the SDK's
+ * The Gemini API accepts both together on `gemini-3.5-flash`; the SDK's
  * TypeScript surface predates these tools, so we cast through `unknown`.
  */
 import type { Tool } from '@google/generative-ai';

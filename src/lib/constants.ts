@@ -1220,5 +1220,8 @@ OUTPUT FORMAT (return ONLY this JSON):
 // Apollo API configuration
 export const APOLLO_API_BASE_URL = 'https://api.apollo.io/api/v1';
 
-// Gemini model configuration
-export const GEMINI_MODEL = 'gemini-3-pro-preview';
+// Gemini model configuration.
+// gemini-3.5-flash: GA (released May 2026, internal 3.5-flash-05-2026). 1M input /
+// 65k output context, supports googleSearch + urlContext grounding in one request,
+// faster and cheaper than the prior gemini-3-pro-preview used for generation.
+export const GEMINI_MODEL = 'gemini-3.5-flash';
