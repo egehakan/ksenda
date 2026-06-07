@@ -57,3 +57,6 @@ next-env.d.ts
 
 # claude code workspace settings
 .claude/
+
+# personal claude-code outreach automation — never shipped publicly
+/automation/

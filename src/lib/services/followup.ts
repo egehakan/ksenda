@@ -222,6 +222,7 @@ You have url-context and google-search. Before writing:
         companyId: company.id,
         step: nextStep,
         channel: 'linkedin',
+        language: company.email.language,
         promptUsed: filledPrompt,
         subject: null,
         body: finalBody,
@@ -306,6 +307,7 @@ You have url-context and google-search. Before writing:
       companyId: company.id,
       step: nextStep,
       channel: 'email',
+      language: company.email.language,
       promptUsed: filledPrompt,
       subject: finalSubject,
       body: finalBody,
@@ -517,7 +519,8 @@ export async function sendApprovedFollowUp(
     subject,
     body,
     customSenderEmail,
-    threading
+    threading,
+    (followUp as { language?: string }).language
   );
 
   if (!result.success) {

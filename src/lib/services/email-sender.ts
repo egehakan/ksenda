@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import prisma from '@/lib/prisma';
 import { PIPELINE_STATES } from '@/lib/constants';
+import { signatureHtml } from '@/lib/signatures';
 import { transitionState } from './pipeline';
 
 interface SendResult {
@@ -193,7 +194,8 @@ export async function sendEmailViaSmtp(
   subject: string,
   body: string,
   customSenderEmail?: string,
-  threading?: { inReplyTo: string; references?: string[] }
+  threading?: { inReplyTo: string; references?: string[] },
+  lang?: string | null
 ): Promise<SendResult> {
   let cfg: ResolvedSmtp;
   try {
@@ -204,6 +206,12 @@ export async function sendEmailViaSmtp(
       error: 'Email sending is not configured. Add Gmail/Outlook/SMTP credentials in Settings.',
     };
   }
+
+  // Localized signature by the email's language (en|tr|de). Overrides the
+  // account's static signature so a mixed-language account (e.g. Turkish to
+  // Turkey + English to UAE) signs each mail in the right language with the
+  // matching egehakankaraagac.com/report/<lang> link.
+  if (lang) cfg.signature = signatureHtml(lang);
 
   const fromEmail = customSenderEmail || cfg.fromEmail;
 
@@ -304,7 +312,15 @@ export async function sendApprovedEmail(
     company.email.finalSubject || company.email.editedSubject || company.email.subject || '';
   const body = company.email.finalBody || company.email.editedBody || company.email.body;
 
-  const result = await sendEmailViaSmtp(user, recipientEmail, subject, body, customSenderEmail);
+  const result = await sendEmailViaSmtp(
+    user,
+    recipientEmail,
+    subject,
+    body,
+    customSenderEmail,
+    undefined,
+    (company.email as { language?: string }).language
+  );
 
   if (!result.success) {
     await prisma.email.update({

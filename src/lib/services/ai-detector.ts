@@ -55,6 +55,17 @@ export interface AiDetectionResult {
   domain: string;
   hasAi: boolean;
   confidence: AiConfidence;
+  // Graded AI-presence model (optional: absent on verdicts written before it).
+  // aiMaturity 0-5 = WHERE the AI sits (0 none, 1 branding, 2 marketing/chatbot,
+  // 3 vendor bolt-on / non-core dept, 4 operational-in-one-core-op, 5 AI-native).
+  // `reachable` is the gate's single source of truth: a company is still a good
+  // first-AI-use-case prospect unless AI-native / in-house AI team / deep
+  // operational AI on a core op. `hasAi` is derived as (reachable === false).
+  aiMaturity?: number;
+  aiInCoreOps?: boolean;
+  inHouseAiTeam?: boolean;
+  reachable?: boolean;
+  reachReason?: string;
   summary: string;
   evidence: AiDetectionEvidence[];
   operationalSignals: string[];
@@ -141,34 +152,23 @@ ${urlList}
    - "<company name>" + (AI OR "artificial intelligence") site:<domain>
    - "<company name>" partnership (OpenAI OR Anthropic OR Microsoft AI)
 
-3. Score each company strictly:
+3. Grade WHERE the AI sits, not WHETHER any AI exists. The question is: does AI already RUN this company's CORE revenue/operations workflows, or could they BUILD that themselves? Peripheral AI leaves the core operation manual and is HARMLESS (still a great prospect).
 
-CONFIRMED_HAS_AI if ANY ONE is true:
-  - Dedicated /ai or /our-ai or /copilot page exists with substantive product copy
-  - Homepage hero / nav uses "AI", "AI-powered", "agentic" as a product attribute
-  - Careers page lists open role for: ML Engineer, Applied Scientist, AI Engineer, Prompt Engineer, Head of AI/ML, Chief AI Officer
-  - Press release in last 18 months: launched an AI product OR partnered with an AI vendor (OpenAI, Anthropic, Microsoft AI, Glean, Harvey, Sierra, etc.)
-  - Public case study or product page names an AI vendor
+Set aiMaturity 0-5:
+  0 NONE — no AI references anywhere.
+  1 SUPERFICIAL — "AI-powered"/"agentic"/"Smart X" branding, one old (>12mo) blog post, aspiration copy; no working product.
+  2 MARKETING / CUSTOMER-FACING — a website chatbot/support widget, AI lead-capture, AI content/image generation. Touches the funnel, not the back office.
+  3 VENDOR BOLT-ON or NON-CORE DEPARTMENT — AI inside a SaaS they BUY (Salesforce Einstein, HubSpot Breeze, M365 Copilot, Google Workspace Gemini, Shopify ML, Intercom Fin, Gong, Notion AI, QuickBooks/Xero AI), OR AI in HR/IT/spam-filtering/appointment-reminders while the revenue desk is manual.
+  4 OPERATIONAL — a substantive /ai|/platform|/automation page, a named production case study, or a launch press release showing AI RUNNING one revenue/operations workflow they OWN (quoting/claims/estimating/routing/dispatch/scheduling of billable work).
+  5 AI-NATIVE — their product/value-prop IS AI, they SELL AI/ML/data services, OR AI documented across MULTIPLE core operations.
 
-PROBABLY_NO_AI if:
-  - "AI" mentioned only as marketing fluff in a footer or hero subtitle, no product evidence
-  - Single old blog post (>12 months) on AI, nothing since
-  - Generic chatbot widget with menu-driven flows (NOT LLM-style free answers)
-  - Salesforce Einstein / HubSpot Breeze badge but no product evidence
+Set inHouseAiTeam=true ONLY on a strong build signal: a named AI/ML/Data-Science team or leader, a Head of AI / Chief AI Officer / VP-or-Director of AI/ML / MLOps lead, OR 3+ concurrent open BUILDING roles (ML Engineer, Applied/Research Scientist, AI Engineer, MLOps). 1-2 ML postings is noise => at most aiMaturity 3, inHouseAiTeam=false. "AI-literate"/"used ChatGPT" nice-to-haves are USAGE not building => false.
 
-DEFINITELY_NO_AI if:
-  - Zero AI references on site
-  - Zero recent press on AI
-  - No AI/ML roles on careers
-  - No partnership with AI vendors
+Set aiInCoreOps=true ONLY when AI runs inside a CORE revenue operation they operate (production/quoting/claims/estimating/dispatch/scheduling of billable work), evidenced by a product page, case study, or named vendor FOR THAT WORKFLOW. FALSE for marketing chatbots, support deflection, HR/IT AI, M365 Copilot, website personalization. When unsure, set FALSE (favor reach).
 
-IGNORE these (do NOT count as has-AI):
-  - "We use AI to filter spam" in privacy policy
-  - "Smart X" product names (Smart Scheduling, Smart Routing)
-  - "AI-powered" used once in footer with no product backing
-  - Microsoft Copilot for M365 / Google Workspace Gemini (table stakes by 2026)
-  - Shopify ML recommendations (Shopify's engine, not theirs)
-  - Single sponsored Forbes "AI roundup" mention
+Then set reachable: TRUE by default. Set reachable=FALSE only if aiMaturity===5, OR inHouseAiTeam===true, OR (aiMaturity===4 AND aiInCoreOps===true). A peripheral chatbot, marketing AI line, vendor badge (Einstein/Copilot/Breeze), 1-2 ML postings, or AI confined to ONE non-core department must score aiMaturity<=3 and reachable=true. reachReason: one sentence naming the rule that fired or why it stays reachable.
+
+IGNORE as has-AI (never let these disqualify): Microsoft Copilot for M365 / Google Workspace Gemini, Salesforce Einstein / HubSpot Breeze, Shopify ML, Intercom Fin, Gong, Notion AI, QuickBooks/Xero AI (bought, not built); "we use AI to filter spam" boilerplate; "Smart X" naming; a single sponsored AI roundup mention.
 
 ALSO EXTRACT per company:
   - One or two operationalSignals: real, observable pain hooks an outbound email could open with. Examples: "5 open AR Specialist roles", "manual claims appeals referenced on services page", "Q1 expansion into Texas".
@@ -181,8 +181,11 @@ The "verdicts" array MUST contain exactly ${targets.length} objects, one per com
     {
       "company_index": 1,
       "domain": "${targets[0].domain}",
-      "hasAi": true|false,
-      "confidence": "confirmed_has_ai" | "probably_no_ai" | "definitely_no_ai",
+      "aiMaturity": 0,
+      "aiInCoreOps": false,
+      "inHouseAiTeam": false,
+      "reachable": true,
+      "reachReason": "one sentence: which disqualifier fired, or why reachable",
       "summary": "1-2 sentence verdict, name the specific page or article driving the call",
       "evidence": [{"type": "site_page" | "careers_listing" | "press_release" | "partnership" | "blog_post" | "tech_stack", "url": "...", "snippet": "..."}],
       "operationalSignals": ["specific pain hook 1", "specific pain hook 2"]
@@ -191,7 +194,7 @@ The "verdicts" array MUST contain exactly ${targets.length} objects, one per com
   ]
 }
 
-CRITICAL: hasAi must equal true if confidence is "confirmed_has_ai", false otherwise. evidence MUST cite URLs you actually fetched — never fabricate.`;
+CRITICAL: set aiMaturity/aiInCoreOps/inHouseAiTeam/reachable honestly — the system derives confidence and hasAi from them, so do NOT set those yourself. A "bit of AI" (a marketing chatbot, a vendor bolt-on, branding) is reachable; only AI-native / in-house-AI-team / deep-operational-AI companies are not. evidence MUST cite URLs you actually fetched — never fabricate.`;
 }
 
 interface RawVerdict {
@@ -199,6 +202,11 @@ interface RawVerdict {
   domain?: string;
   hasAi?: boolean;
   confidence?: string;
+  aiMaturity?: number;
+  aiInCoreOps?: boolean;
+  inHouseAiTeam?: boolean;
+  reachable?: boolean;
+  reachReason?: string;
   summary?: string;
   evidence?: Array<{ type?: string; url?: string; snippet?: string }>;
   operationalSignals?: string[];
@@ -226,17 +234,48 @@ function normalizeVerdict(
   fetchedUrls: string[],
   searchQueries: string[]
 ): AiDetectionResult {
-  const conf: AiConfidence =
+  const rawConf =
     v.confidence === 'confirmed_has_ai' ||
     v.confidence === 'probably_no_ai' ||
     v.confidence === 'definitely_no_ai'
       ? v.confidence
-      : 'unknown';
-  const hasAi = typeof v.hasAi === 'boolean' ? v.hasAi : conf === 'confirmed_has_ai';
+      : undefined;
+  // Graded model: the prompt emits aiMaturity/aiInCoreOps/inHouseAiTeam/reachable;
+  // older verdicts (or a model that drops them) infer maturity from confidence.
+  const maturityFromConf =
+    rawConf === 'confirmed_has_ai' ? 4 : rawConf === 'definitely_no_ai' ? 0 : rawConf === 'probably_no_ai' ? 2 : undefined;
+  const aiMaturityRaw = typeof v.aiMaturity === 'number' ? v.aiMaturity : maturityFromConf;
+  const aiMaturity =
+    aiMaturityRaw === undefined ? undefined : Math.max(0, Math.min(5, Math.round(aiMaturityRaw)));
+  const aiInCoreOps = v.aiInCoreOps === true;
+  const inHouseAiTeam = v.inHouseAiTeam === true;
+  // Detection failure (no maturity AND no confidence) => unknown/excluded.
+  const detectionFailed = aiMaturity === undefined && rawConf === undefined;
+  const reachable: boolean | undefined = detectionFailed
+    ? undefined
+    : typeof v.reachable === 'boolean'
+      ? v.reachable
+      : (aiMaturity ?? 2) <= 3 && !inHouseAiTeam && !((aiMaturity ?? 2) === 4 && aiInCoreOps);
+  // Recompute confidence + hasAi deterministically from reachable so no consumer
+  // ever sees a contradictory pair (hasAi now means "DISQUALIFYING AI present").
+  const conf: AiConfidence =
+    reachable === undefined
+      ? 'unknown'
+      : reachable === false
+        ? 'confirmed_has_ai'
+        : (aiMaturity ?? 0) === 0
+          ? 'definitely_no_ai'
+          : 'probably_no_ai';
+  const hasAi = reachable === false;
   return {
     domain: normalizeDomain(v.domain || fallback.domain),
     hasAi,
     confidence: conf,
+    aiMaturity,
+    aiInCoreOps,
+    inHouseAiTeam,
+    reachable,
+    reachReason: typeof v.reachReason === 'string' ? v.reachReason : undefined,
     summary: typeof v.summary === 'string' ? v.summary : '',
     evidence: Array.isArray(v.evidence)
       ? v.evidence
@@ -548,8 +587,15 @@ export function detectionMatchesFilter(
   filter: 'any' | 'no_ai' | 'has_ai'
 ): boolean {
   if (filter === 'any') return true;
-  if (filter === 'no_ai') {
-    return r.confidence === 'definitely_no_ai' || r.confidence === 'probably_no_ai';
-  }
-  return r.confidence === 'confirmed_has_ai';
+  // Graded gate (kept in lockstep with automation/lib/plan-core.cjs
+  // backlogMatchesFilter): prefer `reachable` — we skip only DISQUALIFYING AI
+  // (AI-native / in-house AI team / deep operational AI), not any AI trace.
+  // Verdicts written before the graded model lack `reachable`, so fall back to
+  // the legacy confidence enum (confirmed_has_ai => skip; else accept).
+  const reachable =
+    typeof r.reachable === 'boolean'
+      ? r.reachable
+      : r.confidence === 'definitely_no_ai' || r.confidence === 'probably_no_ai';
+  if (filter === 'no_ai') return reachable;
+  return typeof r.reachable === 'boolean' ? r.reachable === false : r.confidence === 'confirmed_has_ai';
 }

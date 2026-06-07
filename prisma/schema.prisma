@@ -197,6 +197,10 @@ model Email {
   // by the user from their own LinkedIn account via the LinkedInSendModal.
   channel String @default("email")
 
+  // "en" | "tr" | "de" — body language; the send path picks the localized
+  // signature (translated tagline + egehakankaraagac.com/report/<lang> link).
+  language String @default("en")
+
   promptUsed String
 
   subject         String?
@@ -244,6 +248,9 @@ model FollowUpEmail {
 
   // Inherits from the parent Company's Email.channel at generation time.
   channel String @default("email")
+
+  // Inherits the parent Email.language ('en' | 'tr' | 'de') at generation time.
+  language String @default("en")
 
   promptUsed      String
   subject         String?
