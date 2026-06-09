@@ -207,10 +207,11 @@ export async function sendEmailViaSmtp(
     };
   }
 
-  // Localized signature by the email's language (en|tr|de). Overrides the
-  // account's static signature so a mixed-language account (e.g. Turkish to
-  // Turkey + English to UAE) signs each mail in the right language with the
-  // matching egehakankaraagac.com/report/<lang> link. First-touch sends (no
+  // Localized signature by the email's language (en|tr; stale 'de' coerces to
+  // en). Overrides the account's static signature so a mixed-language account
+  // (e.g. Turkish to Turkey + English to UAE) signs each mail in the right
+  // language with the matching egehakankaraagac.com/<lang> landing link.
+  // First-touch sends (no
   // threading) drop the cal.com booking link from the signature; follow-ups
   // thread, so they keep it.
   if (lang) cfg.signature = signatureHtml(lang, !threading);

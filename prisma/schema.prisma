@@ -198,7 +198,7 @@ model Email {
   channel String @default("email")
 
   // "en" | "tr" — body language ('de' retired June 2026); the send path picks the localized
-  // signature (translated tagline + egehakankaraagac.com/report/<lang> link).
+  // signature (translated tagline + egehakankaraagac.com/<lang> landing link).
   language String @default("en")
 
   promptUsed String
