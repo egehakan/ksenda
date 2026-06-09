@@ -1,11 +1,13 @@
 // Localized HTML email signatures (app send path). Kept in sync with
 // automation/lib/signatures.cjs. The signature is identical across accounts;
-// only the language varies, by the email's language (en|tr|de): translated
+// only the language varies, by the email's language (en|tr): translated
 // tagline + link labels and a website link to egehakankaraagac.com/report/<lang>
 // (which redirects to /<lang>/report). Applied at send time in place of the
 // static User.signature so a mixed-language account signs each mail correctly.
+// German was retired (June 2026) — DACH recipients get the English signature;
+// any stale 'de' on an old row coerces to 'en'.
 
-export type SignatureLang = "en" | "tr" | "de";
+export type SignatureLang = "en" | "tr";
 
 const LINKEDIN = "https://www.linkedin.com/in/egehakankar";
 const CAL = "https://cal.com/ege-hakan-karaagac-s7l6lv/30min";
@@ -24,16 +26,10 @@ const COPY: Record<SignatureLang, { role: string; pitch: string; linkedin: strin
     linkedin: "LinkedIn",
     book: "30 dakikalık görüşme ayarlayın",
   },
-  de: {
-    role: "Unabhängiger KI-Ingenieur &middot; Ex-Amazon &middot; Ex-Accenture &middot; Gründer BrandVox AI",
-    pitch: "Das erste KI-Werkzeug, das Ihr Betrieb wirklich nutzt, gemessen in gesparten Stunden und zurückgewonnenem Geld",
-    linkedin: "LinkedIn",
-    book: "30-Minuten-Gespräch vereinbaren",
-  },
 };
 
 export function normSignatureLang(lang?: string | null): SignatureLang {
-  return lang === "tr" || lang === "de" ? lang : "en";
+  return lang === "tr" ? "tr" : "en";
 }
 
 export function signatureHtml(lang?: string | null, firstTouch = false): string {
