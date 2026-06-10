@@ -60,3 +60,5 @@ next-env.d.ts
 
 # personal claude-code outreach automation — never shipped publicly
 /automation/
+
+api_keys.txt
