@@ -18,6 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { parseMultiLeg } from "@/lib/multi-leg";
+import {
+  MultiLegChips,
+  MultiLegBreakdown,
+} from "@/components/settings/multi-leg-view";
 
 type Channel = "email" | "linkedin";
 
@@ -30,6 +35,10 @@ interface Recipe {
   defaultDailyCap: number;
   isBuiltIn: boolean;
   channel?: Channel;
+  // A DAILY recipe carries { multiLeg, legs }. The recipes API parses it into
+  // `filters`; the schedule API embeds the raw row with only `filtersJson`.
+  filters?: Record<string, unknown> | null;
+  filtersJson?: string | null;
 }
 
 interface CampaignDay {
@@ -368,6 +377,9 @@ function CampaignRowMini({
 }) {
   const code = day.savedSearch?.code;
   const isLinkedIn = channelOf(day) === "linkedin";
+  const ml = parseMultiLeg(
+    day.savedSearch?.filtersJson ?? day.savedSearch?.filters
+  );
   return (
     <button
       type="button"
@@ -395,7 +407,7 @@ function CampaignRowMini({
             />
           )}
           <span className="text-[10px] text-[var(--color-fg-muted)] tabular-nums">
-            cap {day.dailyImportCap}
+            cap {ml ? ml.totalCap : day.dailyImportCap}
           </span>
         </div>
       ) : (
@@ -403,10 +415,14 @@ function CampaignRowMini({
           No recipe
         </span>
       )}
-      {day.savedSearch?.name && (
-        <p className="text-[10.5px] text-[var(--color-fg-muted)] leading-tight line-clamp-1">
-          {day.savedSearch.name}
-        </p>
+      {ml ? (
+        <MultiLegChips legs={ml.legs} size="xs" className="mt-1" />
+      ) : (
+        day.savedSearch?.name && (
+          <p className="text-[10.5px] text-[var(--color-fg-muted)] leading-tight line-clamp-1">
+            {day.savedSearch.name}
+          </p>
+        )
       )}
     </button>
   );
@@ -461,6 +477,13 @@ function DayEditorPanel({
   // the matching slot is empty, or silently put the wrong channel on the
   // row. Filtering at the UI is the clearer path.
   const channelRecipes = recipes.filter((r) => (r.channel ?? "email") === channel);
+
+  // When the picked recipe is a multi-country DAILY recipe, surface its legs
+  // read-only here (the per-country caps live in the recipe, not this day).
+  const selectedRecipe = recipes.find((r) => r.id === recipeId) || null;
+  const selectedMl = parseMultiLeg(
+    selectedRecipe?.filters ?? selectedRecipe?.filtersJson
+  );
 
   // ESC closes the panel for keyboard users. Bind only while open so we
   // don't leak listeners.
@@ -678,9 +701,30 @@ function DayEditorPanel({
                 )}
               </div>
 
+              {selectedMl && (
+                <div className="space-y-2">
+                  <Label>
+                    Countries this day{date ? " → today's industry" : ""}
+                  </Label>
+                  <MultiLegBreakdown
+                    legs={selectedMl.legs}
+                    date={date}
+                    totalCap={selectedMl.totalCap}
+                  />
+                  <p className="text-[10.5px] text-[var(--color-fg-subtle)] leading-relaxed">
+                    Per-country caps + the rotating industries are part of the{" "}
+                    <span className="font-mono">{selectedRecipe?.code}</span>{" "}
+                    recipe — edit them in the Recipe library below. The caps
+                    here are the daily total used by the send step.
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
-                  <Label htmlFor="dep-import">Import cap</Label>
+                  <Label htmlFor="dep-import">
+                    {selectedMl ? "Import total" : "Import cap"}
+                  </Label>
                   <Input
                     id="dep-import"
                     type="number"
@@ -691,11 +735,15 @@ function DayEditorPanel({
                     }
                   />
                   <p className="text-[10.5px] text-[var(--color-fg-subtle)]">
-                    Max new contacts to fetch.
+                    {selectedMl
+                      ? "Daily total across all countries."
+                      : "Max new contacts to fetch."}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="dep-send">Send cap</Label>
+                  <Label htmlFor="dep-send">
+                    {selectedMl ? "Send total" : "Send cap"}
+                  </Label>
                   <Input
                     id="dep-send"
                     type="number"
@@ -706,7 +754,9 @@ function DayEditorPanel({
                     }
                   />
                   <p className="text-[10.5px] text-[var(--color-fg-subtle)]">
-                    Max emails to send.
+                    {selectedMl
+                      ? "Daily total emails to send."
+                      : "Max emails to send."}
                   </p>
                 </div>
               </div>

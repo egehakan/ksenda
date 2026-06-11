@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { validateMultiLegFilters } from '@/lib/validate-multileg';
 
 export const maxDuration = 300;
 
@@ -35,6 +36,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (body.aiFilter === 'any' || body.aiFilter === 'no_ai' || body.aiFilter === 'has_ai') {
       data.aiFilter = body.aiFilter;
     }
+
+    // Validate a multi-country DAILY plan so a structurally-broken recipe can't
+    // be persisted (the CLI silently drops empty-rotate legs and rejects a
+    // zero-leg recipe). Non-multiLeg filters are unaffected.
+    const mlErr = validateMultiLegFilters(body.filters);
+    if (mlErr) return NextResponse.json({ error: mlErr }, { status: 400 });
 
     if (existing.isBuiltIn) {
       // Built-ins: cap + filters + aiFilter only. Channel is locked on

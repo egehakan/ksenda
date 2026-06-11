@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/auth';
+import { validateMultiLegFilters } from '@/lib/validate-multileg';
 
 export const maxDuration = 300;
 
@@ -68,6 +69,9 @@ export async function POST(request: NextRequest) {
     if (!filters || typeof filters !== 'object') {
       return NextResponse.json({ error: 'filters object is required' }, { status: 400 });
     }
+    // Reject a structurally-broken multi-country DAILY plan (no-op for normal filters).
+    const mlErr = validateMultiLegFilters(filters);
+    if (mlErr) return NextResponse.json({ error: mlErr }, { status: 400 });
 
     const validAiFilter =
       aiFilter === 'no_ai' || aiFilter === 'has_ai' ? aiFilter : 'any';

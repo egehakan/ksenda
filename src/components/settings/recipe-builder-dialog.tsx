@@ -1,14 +1,31 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, X, AlertCircle, Sparkles, Mail, Linkedin } from "lucide-react";
+import {
+  Loader2,
+  X,
+  AlertCircle,
+  Sparkles,
+  Mail,
+  Linkedin,
+  Plus,
+  Trash2,
+  Globe,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AiFilterToggle } from "@/components/apollo/ai-filter-toggle";
+import { parseMultiLeg, legShort, legFlag } from "@/lib/multi-leg";
 
 /**
  * RecipeBuilderDialog — form-based create/edit for SavedSearch recipes.
@@ -31,6 +48,9 @@ export interface RecipeBuilderRecipe {
   description?: string | null;
   kind: "companies" | "people";
   filters: Record<string, unknown>;
+  /** Raw filtersJson — a fallback for multiLeg detection when `filters` is
+   *  empty / failed to parse, so a DAILY recipe is never flattened on edit. */
+  filtersJson?: string | null;
   defaultDailyCap: number;
   isBuiltIn?: boolean;
   /** Pre-import AI gate. Defaults to 'any'. */
@@ -78,11 +98,25 @@ type FormState = {
   advancedJson: string;
   useAdvancedJson: boolean;
 
+  // Multi-country "DAILY" recipe: when true the targeting section becomes a
+  // per-country legs editor instead of the simple Apollo fields.
+  isMultiLeg: boolean;
+  legs: FormLeg[];
+
   // Recipe-level AI presence gate (per the import-time page-walk loop).
   aiFilter: "any" | "no_ai" | "has_ai";
 
   // Outreach channel the recipe drives.
   channel: "email" | "linkedin";
+};
+
+// One editable country leg in the structured multi-country editor. `rotate` is
+// kept as a CSV string for the text input; it's split into an array on save.
+type FormLeg = {
+  country: string;
+  key: string;
+  cap: number;
+  rotate: string;
 };
 
 const EMPTY_FORM: FormState = {
@@ -110,6 +144,8 @@ const EMPTY_FORM: FormState = {
   jobTitles: "",
   advancedJson: "",
   useAdvancedJson: false,
+  isMultiLeg: false,
+  legs: [],
   aiFilter: "any",
   channel: "email",
 };
@@ -143,6 +179,27 @@ function intOrUndef(s: string): number | undefined {
 function formToFilters(f: FormState): Record<string, unknown> {
   if (f.useAdvancedJson) {
     return JSON.parse(f.advancedJson);
+  }
+  // Multi-country DAILY recipe — serialize the structured legs editor back into
+  // the { multiLeg, totalCap, legs } shape the CLI orchestrator expands.
+  if (f.isMultiLeg) {
+    const legs = f.legs.map((l) => {
+      const leg: Record<string, unknown> = {
+        cap: Number(l.cap) || 0,
+        rotate: l.rotate
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      if (l.country.trim()) leg.country = l.country.trim();
+      if (l.key.trim()) leg.key = l.key.trim().toUpperCase();
+      return leg;
+    });
+    return {
+      multiLeg: true,
+      totalCap: legs.reduce((s, l) => s + ((l.cap as number) || 0), 0),
+      legs,
+    };
   }
   const obj: Record<string, unknown> = {};
   if (f.kind === "companies") {
@@ -233,8 +290,33 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
         aiFilter: initial.aiFilter ?? "any",
         channel: initial.channel ?? "email",
       };
-      const patch = filtersToForm(initial.filters, initial.kind);
-      setForm({ ...base, ...patch });
+      // Detect a multiLeg DAILY recipe from the parsed filters, falling back to
+      // the raw filtersJson when `filters` is empty (parse failed upstream) so
+      // editing never silently flattens the legs.
+      const ml = parseMultiLeg(
+        initial.filters && Object.keys(initial.filters).length
+          ? initial.filters
+          : initial.filtersJson
+      );
+      if (ml) {
+        // Multi-country DAILY recipe — load its legs into the structured
+        // editor. formToFilters serializes them back to { multiLeg, legs }, so
+        // the structure is never flattened into empty Apollo filters.
+        setForm({
+          ...base,
+          kind: "companies",
+          isMultiLeg: true,
+          legs: ml.legs.map((l) => ({
+            country: l.country || "",
+            key: l.key || legShort(l),
+            cap: l.cap,
+            rotate: (l.rotate || []).join(", "),
+          })),
+        });
+      } else {
+        const patch = filtersToForm(initial.filters, initial.kind);
+        setForm({ ...base, ...patch });
+      }
     } else {
       setForm(EMPTY_FORM);
     }
@@ -255,6 +337,25 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
             ? `Advanced JSON is not valid: ${e?.message || "parse error"}`
             : "Could not build filters object"
         );
+      }
+      // Guard a multi-country recipe so we never persist a structurally broken
+      // DAILY plan — the CLI silently drops a leg with an empty rotate list and
+      // rejects a zero-leg recipe entirely, leaving an unusable recipe.
+      if ((filters as { multiLeg?: unknown }).multiLeg === true) {
+        const legs = (filters as { legs?: unknown[] }).legs;
+        if (!Array.isArray(legs) || legs.length === 0) {
+          throw new Error("Add at least one country before saving.");
+        }
+        for (const lg of legs as Array<{
+          country?: string;
+          rotate?: unknown[];
+        }>) {
+          if (!Array.isArray(lg.rotate) || lg.rotate.length === 0) {
+            throw new Error(
+              `${lg.country || "Each country"} needs at least one industry recipe code (e.g. DE1, DE2 …).`
+            );
+          }
+        }
       }
       const payload: Record<string, unknown> = {
         code: form.code.trim(),
@@ -357,6 +458,17 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
 
         {/* Body */}
         <div className="p-6 space-y-6 max-h-[calc(100vh-200px)] overflow-y-auto">
+          {form.isMultiLeg && (
+            <div className="flex items-start gap-2 rounded-md border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/[0.07] p-3 text-sm">
+              <Globe className="h-4 w-4 shrink-0 mt-0.5 text-[var(--color-accent)]" />
+              <span className="text-[var(--color-fg-muted)]">
+                This is a multi-country <strong>DAILY</strong> plan. Each country
+                runs every day with its own cap; the <code>/run-today-automation</code>{" "}
+                CLI rotates through that country&apos;s industry recipes one per
+                day. Edit the per-country caps below.
+              </span>
+            </div>
+          )}
           {/* Identity */}
           <Section title="Identity">
             <div className="grid grid-cols-1 sm:grid-cols-[120px_minmax(0,1fr)] gap-4">
@@ -467,7 +579,8 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
             </div>
           </Section>
 
-          {/* Kind picker */}
+          {/* Kind picker — N/A for a multi-country DAILY recipe (always companies). */}
+          {!form.isMultiLeg && (
           <Section title="Search type">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {(["people", "companies"] as const).map((k) => (
@@ -494,13 +607,16 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
               ))}
             </div>
           </Section>
+          )}
 
           {/* Toggle: simple vs advanced */}
           <div className="flex items-center justify-between rounded-md border border-[var(--color-line-soft)] p-3">
             <div>
               <Label className="text-sm">Advanced (raw JSON)</Label>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Edit filters as JSON. Skips the simple form below.
+                {form.isMultiLeg
+                  ? "Edit the multi-country plan as raw JSON instead of the editor below."
+                  : "Edit filters as JSON. Skips the simple form below."}
               </p>
             </div>
             <Switch
@@ -532,12 +648,14 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
                 recipe's filters as a template.
               </Hint>
             </Section>
+          ) : form.isMultiLeg ? (
+            <MultiLegEditor form={form} setForm={setForm} />
           ) : (
             <SimpleForm form={form} set={set} />
           )}
 
           {/* Live preview */}
-          {!form.useAdvancedJson && (
+          {!form.useAdvancedJson && !form.isMultiLeg && (
             <Section title="Preview">
               <pre className="rounded-md border border-[var(--color-line-soft)] bg-[var(--color-canvas)] p-3 text-xs font-mono leading-relaxed overflow-x-auto max-h-[200px] text-muted-foreground">
                 {previewJson}
@@ -601,6 +719,132 @@ export function RecipeBuilderDialog({ open, initial, onClose, onSaved }: Props) 
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Structured per-country editor for a multi-country DAILY recipe. Each row is
+ * one country leg: flag + country, short key, per-day cap, and the comma-
+ * separated single-industry recipe codes the run rotates through (one per day).
+ * Serializes to { multiLeg, totalCap, legs } via formToFilters.
+ */
+function MultiLegEditor({
+  form,
+  setForm,
+}: {
+  form: FormState;
+  setForm: Dispatch<SetStateAction<FormState>>;
+}) {
+  const legs = form.legs;
+  const total = legs.reduce((s, l) => s + (Number(l.cap) || 0), 0);
+  const updateLeg = (i: number, patch: Partial<FormLeg>) =>
+    setForm((p) => ({
+      ...p,
+      legs: p.legs.map((l, idx) => (idx === i ? { ...l, ...patch } : l)),
+    }));
+  const removeLeg = (i: number) =>
+    setForm((p) => ({ ...p, legs: p.legs.filter((_, idx) => idx !== i) }));
+  const addLeg = () =>
+    setForm((p) => ({
+      ...p,
+      legs: [...p.legs, { country: "", key: "", cap: 5, rotate: "" }],
+    }));
+
+  return (
+    <Section title="Countries & caps">
+      <div className="space-y-3">
+        {legs.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            No countries yet — add one below.
+          </p>
+        )}
+        {legs.map((leg, i) => {
+          const flag = legFlag({
+            country: leg.country,
+            key: leg.key,
+            cap: leg.cap,
+            rotate: leg.rotate
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          });
+          return (
+            <div
+              key={i}
+              className="rounded-md border border-[var(--color-line-soft)] p-3 space-y-2.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span aria-hidden className="text-lg leading-none w-6 text-center">
+                  {flag}
+                </span>
+                <Input
+                  value={leg.country}
+                  onChange={(e) => updateLeg(i, { country: e.target.value })}
+                  placeholder="Country (e.g. Germany)"
+                  className="flex-1 min-w-[140px]"
+                />
+                <Input
+                  value={leg.key}
+                  onChange={(e) => updateLeg(i, { key: e.target.value })}
+                  placeholder="Key"
+                  title="Short code for the flag + leg id, e.g. DE. Leave blank to auto-derive from the recipe codes (DE1 → DE)."
+                  className="w-16 font-mono uppercase"
+                />
+                <div className="inline-flex items-center gap-1">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={leg.cap}
+                    onChange={(e) =>
+                      updateLeg(i, {
+                        cap: Math.max(0, parseInt(e.target.value, 10) || 0),
+                      })
+                    }
+                    className="w-[72px] tabular-nums"
+                  />
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    /day
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeLeg(i)}
+                  title="Remove country"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--color-fg-subtle)] hover:text-[var(--color-status-error)] hover:bg-[var(--color-status-error)]/10"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+              <div>
+                <Input
+                  value={leg.rotate}
+                  onChange={(e) => updateLeg(i, { rotate: e.target.value })}
+                  placeholder="Industry recipes, rotated daily — e.g. DE1, DE2, DE3, DE4, DE5, DE6"
+                  className="font-mono text-xs"
+                />
+                <Hint>
+                  Comma-separated single-industry recipe codes for this country.
+                  The run rotates through them one per day.
+                </Hint>
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex items-center justify-between pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={addLeg}>
+            <Plus className="h-3.5 w-3.5" />
+            Add country
+          </Button>
+          <span className="text-sm text-[var(--color-fg-muted)]">
+            Total{" "}
+            <span className="font-semibold tabular-nums text-[var(--color-fg)]">
+              {total}
+            </span>
+            /day
+          </span>
+        </div>
+      </div>
+    </Section>
   );
 }
 

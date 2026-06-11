@@ -159,6 +159,30 @@ export const automationRun = inngest.createFunction(
             } catch {
               /* invalid JSON → empty filters */
             }
+            // A multiLeg "DAILY" recipe carries no Apollo filters of its own —
+            // its filtersJson is { multiLeg, legs:[{country,cap,rotate}] }, meant
+            // to be expanded into per-country legs by the CLI orchestrator
+            // (/run-today-automation). Passing {multiLeg,legs} straight to
+            // walkAndImportCompanies would run a broad, UNFILTERED Apollo search.
+            // Skip it here with a clear outcome instead of misfiring.
+            if (filters && (filters as { multiLeg?: unknown }).multiLeg) {
+              await step.run(`stage1-skip-multileg-${day.id}`, async () => {
+                await prisma.campaignDay.update({
+                  where: { id: day.id },
+                  data: {
+                    ranAt: new Date(),
+                    status: "completed",
+                    outcomeSummary:
+                      "skipped: multi-country DAILY recipe — run via the /run-today-automation CLI (this engine does not expand multi-leg recipes).",
+                  },
+                });
+              });
+              errors.push({
+                stage: "import",
+                detail: "multileg_recipe_requires_cli_orchestrator",
+              });
+              continue;
+            }
             const recipeAiFilter: AiFilter =
               day.savedSearch!.aiFilter === "no_ai" ||
               day.savedSearch!.aiFilter === "has_ai"

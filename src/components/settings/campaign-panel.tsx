@@ -35,6 +35,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AutomationCalendar } from "@/components/settings/automation-calendar";
 import { SmartSetupWizard } from "@/components/settings/smart-setup-wizard";
 import { useAccountBusy } from "@/hooks/use-account-busy";
+import { parseMultiLeg } from "@/lib/multi-leg";
+import {
+  MultiLegChips,
+  MultiLegBreakdown,
+} from "@/components/settings/multi-leg-view";
 
 interface Recipe {
   id: string;
@@ -44,7 +49,11 @@ interface Recipe {
   kind: "companies" | "people";
   defaultDailyCap: number;
   isBuiltIn: boolean;
-  filters: Record<string, unknown> | null;
+  // The recipes API parses this into `filters`; the schedule API embeds the raw
+  // SavedSearch which only has `filtersJson`. Either may carry a DAILY recipe's
+  // { multiLeg, legs } payload — parseMultiLeg accepts both.
+  filters?: Record<string, unknown> | null;
+  filtersJson?: string | null;
   aiFilter?: "any" | "no_ai" | "has_ai";
   channel?: "email" | "linkedin";
 }
@@ -641,9 +650,17 @@ export function CampaignPanel() {
                       description: r.description,
                       kind: r.kind,
                       filters: r.filters || {},
+                      // Pass the raw JSON too so a DAILY recipe is still
+                      // detected as multiLeg even if `filters` failed to parse
+                      // server-side (else editing would flatten its legs).
+                      filtersJson: r.filtersJson ?? null,
                       defaultDailyCap: r.defaultDailyCap,
                       isBuiltIn: r.isBuiltIn,
                       aiFilter: r.aiFilter ?? "any",
+                      // Preserve the recipe's channel — omitting it defaulted
+                      // every edited recipe back to "email", silently flipping
+                      // LinkedIn recipes.
+                      channel: r.channel ?? "email",
                     },
                   });
                 const isSelected = selectedRecipeIds.has(r.id);
@@ -651,6 +668,7 @@ export function CampaignPanel() {
                   deleteRecipeMutation.isPending &&
                   Array.isArray(deleteRecipeMutation.variables) &&
                   (deleteRecipeMutation.variables as string[]).includes(r.id);
+                const cardMl = parseMultiLeg(r.filters ?? r.filtersJson);
                 return (
                   <div
                     key={r.id}
@@ -730,7 +748,15 @@ export function CampaignPanel() {
                         cap {r.defaultDailyCap}
                       </span>
                     </div>
-                    {r.description && (
+                    {cardMl && (
+                      <div className="mt-2 pl-7 pr-8">
+                        <div className="mb-1 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--color-fg-subtle)]">
+                          {cardMl.legs.length} countries · {cardMl.totalCap}/day
+                        </div>
+                        <MultiLegChips legs={cardMl.legs} size="xs" />
+                      </div>
+                    )}
+                    {r.description && !cardMl && (
                       <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed line-clamp-2 pl-7 pr-8">
                         {r.description}
                       </p>
@@ -860,51 +886,87 @@ function TodaySummary({ day }: { day: CampaignDay }) {
       </div>
     );
   }
+  const ml = parseMultiLeg(
+    day.savedSearch?.filtersJson ?? day.savedSearch?.filters
+  );
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <div>
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">
-          Recipe
-        </div>
-        <div className="mt-1 flex items-center gap-2 text-sm">
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold",
-              (day.savedSearch?.code || "").startsWith("A")
-                ? "bg-[var(--color-status-success)]/15 text-[var(--color-status-success)]"
-                : "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-            )}
-          >
-            {day.savedSearch?.code || "—"}
-          </span>
-          {channelBadge}
-          <span className="font-medium">{day.savedSearch?.name || "No recipe"}</span>
-        </div>
-      </div>
-      <div>
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">
-          Import cap
-        </div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums">
-          {day.dailyImportCap}
-        </div>
-      </div>
-      <div>
-        <div className="text-xs uppercase tracking-wider text-muted-foreground">
-          Send cap
-        </div>
-        <div className="mt-1 text-2xl font-semibold tabular-nums">
-          {day.dailySendCap}
-        </div>
-      </div>
-      {day.focusNote && (
-        <div className="basis-full">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div>
           <div className="text-xs uppercase tracking-wider text-muted-foreground">
-            Focus
+            Recipe
           </div>
-          <div className="mt-1 text-sm text-[var(--color-fg)] italic">
-            {day.focusNote}
+          <div className="mt-1 flex items-center gap-2 text-sm">
+            <span
+              className={cn(
+                "inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-semibold",
+                (day.savedSearch?.code || "").startsWith("A")
+                  ? "bg-[var(--color-status-success)]/15 text-[var(--color-status-success)]"
+                  : "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
+              )}
+            >
+              {day.savedSearch?.code || "—"}
+            </span>
+            {channelBadge}
+            <span className="font-medium">{day.savedSearch?.name || "No recipe"}</span>
           </div>
+        </div>
+        {ml ? (
+          <div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              Daily total
+            </div>
+            <div className="mt-1 text-2xl font-semibold tabular-nums">
+              {ml.totalCap}
+              <span className="ml-1.5 text-xs font-normal text-[var(--color-fg-subtle)]">
+                across {ml.legs.length}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                Import cap
+              </div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums">
+                {day.dailyImportCap}
+              </div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                Send cap
+              </div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums">
+                {day.dailySendCap}
+              </div>
+            </div>
+          </>
+        )}
+        {day.focusNote && (
+          <div className="basis-full">
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">
+              Focus
+            </div>
+            <div className="mt-1 text-sm text-[var(--color-fg)] italic">
+              {day.focusNote}
+            </div>
+          </div>
+        )}
+      </div>
+      {ml && (
+        <div>
+          <div className="mb-1.5 text-xs uppercase tracking-wider text-muted-foreground">
+            Today&apos;s countries{" "}
+            <span className="text-[var(--color-fg-subtle)] normal-case tracking-normal">
+              — each fills its own cap; the industry rotates daily
+            </span>
+          </div>
+          <MultiLegBreakdown
+            legs={ml.legs}
+            date={day.scheduledDate}
+            totalCap={ml.totalCap}
+          />
         </div>
       )}
     </div>

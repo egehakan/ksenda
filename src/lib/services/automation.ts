@@ -408,6 +408,25 @@ export async function orchestrateRun(userId: string): Promise<OrchestrationResul
           } catch {
             /* invalid JSON — treated as empty filters */
           }
+          // multiLeg "DAILY" recipes are expanded into per-country legs by the
+          // CLI orchestrator (/run-today-automation), not this engine. Skip
+          // rather than send {multiLeg,legs} to Apollo as a broad search.
+          if (filters && (filters as { multiLeg?: unknown }).multiLeg) {
+            await prisma.campaignDay.update({
+              where: { id: todayDay.id },
+              data: {
+                ranAt: new Date(),
+                status: 'completed',
+                outcomeSummary:
+                  'skipped: multi-country DAILY recipe — run via the /run-today-automation CLI (this engine does not expand multi-leg recipes).',
+              },
+            });
+            result.errors.push({
+              stage: 'import',
+              detail: 'multileg_recipe_requires_cli_orchestrator',
+            });
+            continue;
+          }
           const recipeAiFilter =
             (todayDay.savedSearch as unknown as { aiFilter?: string }).aiFilter ===
               'no_ai' ||
